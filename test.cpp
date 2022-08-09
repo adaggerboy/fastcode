@@ -1,8 +1,8 @@
 #include <iostream>
 using namespace std;
 
-$cClass[iwidth,iheight,!~v*pointer,+CSuLdefmask,~v**a]
-$cClass2[~Class:cls]
+$CClass[~~>isize=1,~~c*buffer@nsize,~c*buffers@m]
+$CClass2[~Class:cls]
 
 int main(int argc, char const *argv[]) {
   /* code */

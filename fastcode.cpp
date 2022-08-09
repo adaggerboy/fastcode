@@ -15,13 +15,16 @@ struct Field {
   string name;
   string init;
   int vision;
-  bool unsettable, getbylink, internal;
+  bool unsettable, getbylink, internal, construct;
+  unsigned int attribute;
+  string attr;
 };
 
 Field parseField(string f) {
   Field res;
   int t = f.find_first_of(':');
   int e = f.find_first_of('=');
+  int a = f.find_first_of('@');
   if(t + 1) {
     int i = 0;
     if(f[i] == '!') res.vision = 0;
@@ -34,6 +37,7 @@ Field parseField(string f) {
     res.unsettable = false;
     res.internal = false;
     res.getbylink = false;
+    res.construct = false;
     while (1) {
       if(f[i] == '~') {
         if(res.internal) {
@@ -42,16 +46,28 @@ Field parseField(string f) {
         }
         else res.internal = true;
       } else if(f[i] == '&') res.getbylink = true;
+      else if(f[i] == '>') res.construct = true;
       else break;
       i++;
     }
-
     res.type = f.substr(i, t - i);
-    if(res.type.find("const") + 1) res.unsettable = true;
+    if(res.type.find("const ") + 1) res.unsettable = true;
+    if(a + 1) {
+      if(f[a + 1] == 'M') {
+        res.attr = f.substr(a + 2, f.npos);
+        res.attribute = 0x80000001;
+      } else if(f[a + 1] == 'n') {
+        res.attr = f.substr(a + 2, f.npos);
+        res.attribute = 0x80000002;
+      } else if(f[a + 1] == 'm') {
+        res.attr = f.substr(a + 2, f.npos);
+        res.attribute = 0x80000003;
+      }
+    } else a = f.length();
     if(e + 1) {
       res.name = f.substr(t + 1, e - t - 1);
-      res.init = f.substr(e + 1, f.npos);
-    } else res.name = f.substr(t + 1, f.npos);
+      res.init = f.substr(e + 1, a - e - 1);
+    } else res.name = f.substr(t + 1, a - t - 1);
   } else {
     int i = 0;
     if(f[i] == '+') res.vision = 2;
@@ -64,6 +80,7 @@ Field parseField(string f) {
     res.unsettable = false;
     res.internal = false;
     res.getbylink = false;
+    res.construct = false;
     while (1) {
       if(f[i] == 'C') {
         res.type += "const ";
@@ -79,6 +96,7 @@ Field parseField(string f) {
         }
         else res.internal = true;
       } else if(f[i] == '&') res.getbylink = true;
+      else if(f[i] == '>') res.construct = true;
       else break;
       i++;
     }
@@ -97,10 +115,23 @@ Field parseField(string f) {
     while(f[i] == '*' || f[i] == '&') {
       res.type += f[i++];
     }
+    res.attribute = 0;
+    if(a + 1) {
+      if(f[a + 1] == 'M') {
+        res.attr = f.substr(a + 2, f.npos);
+        res.attribute = 0x80000001;
+      } else if(f[a + 1] == 'n') {
+        res.attr = f.substr(a + 2, f.npos);
+        res.attribute = 0x80000002;
+      } else if(f[a + 1] == 'm') {
+        res.attr = f.substr(a + 2, f.npos);
+        res.attribute = 0x80000003;
+      }
+    } else a = f.length();
     if(e + 1) {
       res.name = f.substr(i, e - i);
-      res.init = f.substr(e + 1, f.npos);
-    } else res.name = f.substr(i, f.npos);
+      res.init = f.substr(e + 1, a - e - 1);
+    } else res.name = f.substr(i, a - i);
   }
   return res;
 }
@@ -128,8 +159,8 @@ list<string> genClass(string s, bool def) {
   res.push_back("private:");
   for (Field f : fields) {
     if(f.vision == 0) {
-      string field = "\t" + f.type + " _" + f.name;
-      if(f.init.length()) field += " = " + f.init;
+      string field = "\t" + f.type + " " + f.name;
+      if(f.init.length() && !f.construct) field += " = " + f.init;
       field += ';';
       res.push_back(field);
     }
@@ -137,8 +168,8 @@ list<string> genClass(string s, bool def) {
   res.push_back("protected:");
   for (Field f : fields) {
     if(f.vision == 1) {
-      string field = "\t" + f.type + " _" + f.name;
-      if(f.init.length()) field += " = " + f.init;
+      string field = "\t" + f.type + " " + f.name;
+      if(f.init.length() && !f.construct) field += " = " + f.init;
       field += ';';
       res.push_back(field);
     }
@@ -147,12 +178,94 @@ list<string> genClass(string s, bool def) {
   for (Field f : fields) {
     if(f.vision == 2) {
       string field = "\t" + f.type + " " + f.name;
-      if(f.init.length()) field += " = " + f.init;
+      if(f.init.length() && !f.construct) field += " = " + f.init;
       field += ';';
       res.push_back(field);
     }
   }
-
+  {
+    string tmp = "\t" + classname + "(";
+    string tmptmp;
+    bool c = false;
+    for (Field f : fields) if(f.construct && !f.init.length()) {
+      c = true;
+      if(tmptmp.length()) tmp += tmptmp + ", ";
+      tmptmp = f.type + " _" + f.name;
+    }
+    for (Field f : fields) if(f.construct && f.init.length()) {
+      c = true;
+      if(tmptmp.length()) tmp += tmptmp + ", ";
+      tmptmp = f.type + " _" + f.name + " = " + f.init;
+    }
+    tmp += tmptmp + ')';
+    if(def) {
+      if(c) {
+        tmp += " : ";
+        tmptmp = "";
+        for (Field f : fields) if(f.construct) {
+          if(tmptmp.length()) tmp += tmptmp + ", ";
+          tmptmp = f.name + "(_" + f.name + ")";
+        }
+        tmp += tmptmp;
+      }
+      tmp += " {";
+      res.push_back(tmp);
+      for (Field f : fields) if(f.attribute & 0x80000000) {
+        tmp = "\t\t";
+        if((f.attribute & 0x7fffffff) == 1) {
+          if(f.type.find_last_of('*') == f.type.npos) Error("allocation of non-pointer type");
+          tmp += f.name + " = ";
+          if(f.type != "void*") tmp += "(" + f.type + ")";
+          tmp += "malloc(" + f.attr + ");";
+        } else if((f.attribute & 0x7fffffff) == 3) {
+          if(f.type.find_last_of('*') == f.type.npos) Error("allocation of non-pointer type");
+          string ntype = f.type;
+          ntype.erase(ntype.find_last_of('*'));
+          tmp += f.name + " = ";
+          if(f.type != "void*") tmp += "(" + f.type + ")";
+          tmp += "malloc(";
+          if(f.attr.length()) tmp += f.attr + " * ";
+          tmp += "sizeof(" + ntype + "));";
+        } else if((f.attribute & 0x7fffffff) == 2) {
+          if(f.type.find_last_of('*') == f.type.npos) Error("allocation of non-pointer type");
+          string ntype = f.type;
+          ntype.erase(ntype.find_last_of('*'));
+          tmp += f.name + " = new " + ntype;
+          if(f.attr.length()) tmp += "[" + f.attr + "]";
+          tmp += ";";
+        }
+        res.push_back(tmp);
+      }
+      res.push_back("\t}");
+    } else {
+      tmp += ';';
+      res.push_back(tmp);
+    }
+  }
+  {
+    string tmp = "\t~" + classname + "()";
+    if(def) {
+      tmp += " {";
+      res.push_back(tmp);
+      for (auto f = fields.end(); f != fields.begin(); f--) if(f->attribute & 0x80000000) {
+        tmp = "\t\t";
+        if((f->attribute & 0x7fffffff) == 1) {
+          tmp += "free(" + f->name + ");";
+        } else if((f->attribute & 0x7fffffff) == 3) {
+          tmp += "free(" + f->name + ");";
+        } else if((f->attribute & 0x7fffffff) == 2) {
+          if(f->attr.length()) tmp += "delete [] ";
+          else tmp += "delete ";
+          tmp += f->name + ";";
+        }
+        res.push_back(tmp);
+      }
+      res.push_back("\t}");
+    } else {
+      tmp += ";";
+      res.push_back(tmp);
+    }
+  }
   for (Field f : fields) {
     if(f.vision == 1) {
       if(f.internal) continue;
@@ -167,7 +280,7 @@ list<string> genClass(string s, bool def) {
         tmp += " {";
         res.push_back(tmp);
         tmp.clear();
-        tmp += "\t\t return _" + f.name + ";";
+        tmp += "\t\t return " + f.name + ";";
         res.push_back(tmp);
         tmp.clear();
         res.push_back("\t}");
@@ -176,18 +289,20 @@ list<string> genClass(string s, bool def) {
         res.push_back(tmp);
       }
 
-      if(!f.unsettable && !f.getbylink) tmp = "\tvoid set" + infname + "(" + f.type + " value)";
-      if(def) {
-        tmp += " {";
-        res.push_back(tmp);
-        tmp.clear();
-        tmp += "\t\t _" + f.name + " = value;";
-        res.push_back(tmp);
-        tmp.clear();
-        res.push_back("\t}");
-      } else {
-        tmp += ';';
-        res.push_back(tmp);
+      if(!f.unsettable && !f.getbylink) {
+        tmp = "\tvoid set" + infname + "(" + f.type + " value)";
+        if(def) {
+          tmp += " {";
+          res.push_back(tmp);
+          tmp.clear();
+          tmp += "\t\t " + f.name + " = value;";
+          res.push_back(tmp);
+          tmp.clear();
+          res.push_back("\t}");
+        } else {
+          tmp += ';';
+          res.push_back(tmp);
+        }
       }
     }
   }
